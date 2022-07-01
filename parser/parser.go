@@ -35,7 +35,7 @@ func (p *Parser) Shell() {
 			break
 		case lexer.TokConst:
 			result, err = p.parseAssignment()
-
+			break
 		case ';':
 			p.lexer.NextToken()
 			break
@@ -60,28 +60,15 @@ func (p *Parser) Shell() {
 	}
 }
 
-func (p *Parser) ParseTopLevelExpr() (*FunctionAST, error) {
-	stmt, err := p.parseStatement()
-	if err != nil {
-		return nil, err
-	}
-
-	return &FunctionAST{
-		Prototype: &PrototypeAST{
-			FuncName: "",
-			Params:   []string{},
-		},
-		Body: []*StatementAST{stmt},
-	}, nil
-}
-
 func (p *Parser) ParsePrimary() (ExprAST, error) {
 
 	switch p.lexer.CurrTok {
 	case lexer.TokIdentifier:
 		return p.parseIdentifierExpr()
 	case lexer.TokNumVal:
-		return p.parseNumberExpr()
+		return p.parseDoubleConst()
+	case lexer.TokStringConst:
+		return p.parseStringConst()
 	case '(':
 		return p.parseParenExpr()
 	default:
@@ -184,7 +171,7 @@ func (p *Parser) parseAssignment() (AST, error) {
 		return nil, errors.New("expected identifier after set")
 	}
 
-	ident := p.lexer.Identifier
+	ident := p.lexer.String
 	p.lexer.NextToken()
 
 	if p.lexer.CurrTok != '=' {
@@ -276,21 +263,50 @@ func (p *Parser) parseExternFunc() (*PrototypeAST, error) {
 	// Eat 'extern'
 	p.lexer.NextToken()
 	prototype, err := p.parseFuncPrototype()
+	if err != nil {
+		return nil, err
+	}
+
 	if p.lexer.CurrTok != ';' {
 		return nil, errors.New("expected ; after extern statement")
 	}
-
 	// Eat ;
 	p.lexer.NextToken()
 
-	return prototype, err
+	return prototype, nil
 }
 
 func (p *Parser) parseFuncPrototype() (*PrototypeAST, error) {
+
+	var retType Type
+	var err error
+	switch p.lexer.CurrTok {
+	case lexer.TokString:
+		retType = String
+		err = nil
+		break
+	case lexer.TokDouble:
+		retType = Double
+		err = nil
+		break
+	case lexer.TokVoid:
+		retType = Void
+		err = nil
+		break
+	default:
+		retType = Invalid
+		err = errors.New("expected function return type before name")
+	}
+
+	p.lexer.NextToken()
+	if err != nil {
+		return nil, err
+	}
+
 	if p.lexer.CurrTok != lexer.TokIdentifier {
 		return nil, errors.New("invalid identifier for function definition")
 	}
-	funcName := p.lexer.Identifier
+	funcName := p.lexer.String
 	p.lexer.NextToken()
 
 	if p.lexer.CurrTok != '(' {
@@ -300,18 +316,18 @@ func (p *Parser) parseFuncPrototype() (*PrototypeAST, error) {
 	// Eat (
 	p.lexer.NextToken()
 
-	var params []string
+	var params []*Param
 	if p.lexer.CurrTok != ')' {
 		for true {
-			if p.lexer.CurrTok != lexer.TokIdentifier {
-				return nil, errors.New("invalid identifier for function parameter")
+
+			param, err := p.parseParam()
+			if err != nil {
+				return nil, err
 			}
-			param := p.lexer.Identifier
-			p.lexer.NextToken()
 			params = append(params, param)
 
 			if p.lexer.CurrTok != ',' && p.lexer.CurrTok != ')' {
-				return nil, errors.New("expected , or ) in function definition")
+				return nil, errors.New("expected , or ) in function prototype")
 			}
 
 			currTok := p.lexer.CurrTok
@@ -328,11 +344,48 @@ func (p *Parser) parseFuncPrototype() (*PrototypeAST, error) {
 	}
 
 	protoype := &PrototypeAST{
-		FuncName: funcName,
-		Params:   params,
+		FuncName:   funcName,
+		Params:     params,
+		ReturnType: retType,
 	}
 
 	return protoype, nil
+}
+
+func (p *Parser) parseParam() (*Param, error) {
+	var typ Type
+	var err error
+	var len int
+	switch p.lexer.CurrTok {
+	case lexer.TokString:
+		typ = String
+		err = nil
+		break
+	case lexer.TokDouble:
+		typ = Double
+		err = nil
+		break
+	default:
+		typ = Invalid
+		err = errors.New("expected type for function parameter")
+	}
+
+	p.lexer.NextToken()
+	if err != nil {
+		return nil, err
+	}
+
+	if p.lexer.CurrTok != lexer.TokIdentifier {
+		return nil, errors.New("invalid identifier for function parameter")
+	}
+	paramName := p.lexer.String
+	p.lexer.NextToken()
+
+	return &Param{
+		Name: paramName,
+		Type: typ,
+		Len:  len,
+	}, nil
 }
 
 func (p *Parser) parseFuncDef() (*FunctionAST, error) {
@@ -386,7 +439,7 @@ func (p *Parser) parseStatementBlock() ([]*StatementAST, error) {
 }
 
 func (p *Parser) parseIdentifierExpr() (ExprAST, error) {
-	id := p.lexer.Identifier
+	id := p.lexer.String
 	p.lexer.NextToken()
 
 	if p.lexer.CurrTok != '(' {
@@ -433,12 +486,20 @@ func (p *Parser) parseIdentifierExpr() (ExprAST, error) {
 
 }
 
-func (p *Parser) parseNumberExpr() (ExprAST, error) {
+func (p *Parser) parseDoubleConst() (ExprAST, error) {
 	numAST := NumberExprAST{
 		Val: p.lexer.NumVal,
 	}
 	p.lexer.NextToken()
 	return &numAST, nil
+}
+
+func (p *Parser) parseStringConst() (ExprAST, error) {
+	strAST := StringExprAST{
+		Val: p.lexer.String,
+	}
+	p.lexer.NextToken()
+	return &strAST, nil
 }
 
 func (p *Parser) parseParenExpr() (ExprAST, error) {

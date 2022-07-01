@@ -8,36 +8,42 @@ import (
 )
 
 type Lexer struct {
-	CurrTok    int
-	Identifier string
-	NumVal     float64
-	reader     *bufio.Reader
+	CurrTok int
+	String  string
+	NumVal  float64
+	reader  *bufio.Reader
 }
 
 const (
-	// Type Tokens
-	TokIdentifier int = -1
-	TokNumVal     int = -2
+	// Lexer Type Tokens
+	TokIdentifier  int = -1
+	TokNumVal      int = -2
+	TokStringConst int = -3
+
+	// Variable Type Tokens
+	TokString int = -4
+	TokDouble int = -5
+	TokVoid   int = -6
 
 	// Keyword Tokens
-	TokDef    int = -3
-	TokExtern int = -4
-	TokSet    int = -5
-	TokReturn int = -6
-	TokConst  int = -7
-	TokIf     int = -8
-	TokElse   int = -9
-	TokWhile  int = -10
+	TokDef    int = -10
+	TokExtern int = -11
+	TokSet    int = -12
+	TokReturn int = -13
+	TokConst  int = -14
+	TokIf     int = -15
+	TokElse   int = -16
+	TokWhile  int = -27
 
 	TokEOF int = -99
 )
 
 func NewLexer(reader *bufio.Reader) *Lexer {
 	l := Lexer{
-		CurrTok:    0,
-		Identifier: "",
-		NumVal:     0,
-		reader:     reader,
+		CurrTok: 0,
+		String:  "",
+		NumVal:  0,
+		reader:  reader,
 	}
 
 	return &l
@@ -58,7 +64,7 @@ func (l *Lexer) parseToken() int {
 		return TokEOF
 	}
 
-	// word token
+	// identifier/keyword token
 	if l.validFirstIdentChar(chr) {
 		str := string(chr)
 
@@ -85,9 +91,15 @@ func (l *Lexer) parseToken() int {
 			return TokElse
 		} else if str == "while" {
 			return TokWhile
+		} else if str == "string" {
+			return TokString
+		} else if str == "double" {
+			return TokDouble
+		} else if str == "void" {
+			return TokVoid
 		}
 
-		l.Identifier = str
+		l.String = str
 		return TokIdentifier
 
 	}
@@ -98,19 +110,28 @@ func (l *Lexer) parseToken() int {
 
 		peek, _ := l.reader.Peek(1)
 		for unicode.IsDigit(rune(peek[0])) {
-			chr, _ = l.reader.ReadByte()
+			chr, err = l.reader.ReadByte()
+			if err != nil {
+				return TokEOF
+			}
 			numStr += string(chr)
 			peek, _ = l.reader.Peek(1)
 		}
 
 		peek, _ = l.reader.Peek(1)
 		if peek[0] == '.' {
-			chr, _ = l.reader.ReadByte()
+			chr, err = l.reader.ReadByte()
+			if err != nil {
+				return TokEOF
+			}
 			numStr += "."
 
 			peek, _ = l.reader.Peek(1)
 			for unicode.IsDigit(rune(peek[0])) {
-				chr, _ = l.reader.ReadByte()
+				chr, err = l.reader.ReadByte()
+				if err != nil {
+					return TokEOF
+				}
 				numStr += string(chr)
 				peek, _ = l.reader.Peek(1)
 			}
@@ -120,6 +141,27 @@ func (l *Lexer) parseToken() int {
 		return TokNumVal
 	}
 
+	// String constant token
+	if chr == '"' {
+		// Eat "
+		str := ""
+
+		peek, _ := l.reader.Peek(1)
+		for peek[0] != '"' {
+			chr, err = l.reader.ReadByte()
+			if err != nil {
+				return TokEOF
+			}
+			str += string(chr)
+			peek, _ = l.reader.Peek(1)
+		}
+
+		// Eat "
+		_, _ = l.reader.ReadByte()
+
+		l.String = str
+		return TokStringConst
+	}
 	// Return other tokens as they are
 	return int(chr)
 }
@@ -141,7 +183,7 @@ func (l *Lexer) skipCommentsAndWhitespace(chr byte, err error) (byte, error) {
 	// Ignore comments
 	peek, _ := l.reader.Peek(1)
 	if len(peek) < 1 {
-		return 0, errors.New("")
+		return 0, nil
 	}
 	if chr == '/' && peek[0] == '*' {
 		// Eat *

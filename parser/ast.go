@@ -104,27 +104,38 @@ func (s StatementAST) CodeGen(block *ir.Block) (interface{}, error) {
 	return s.AST.CodeGen(block)
 }
 
+type Param struct {
+	Name string
+	Type Type
+	Len  int
+}
+
+func (p Param) String() string {
+	return p.Name
+}
+
 type PrototypeAST struct {
 	ASTNode
-	FuncName string
-	Params   []string
+	FuncName   string
+	Params     []*Param
+	ReturnType Type
 }
 
 func (p PrototypeAST) CodeGen(*ir.Block) (interface{}, error) {
 	irParams := make([]*ir.Param, len(p.Params))
 	for i, param := range p.Params {
-		irParams[i] = ir.NewParam(param, types.Double)
+		irParams[i] = ir.NewParam(param.Name, getIRType(param.Type))
 	}
-	return Module.NewFunc(p.FuncName, types.Double, irParams...), nil
+	return Module.NewFunc(p.FuncName, getIRType(p.ReturnType), irParams...), nil
 }
 
 func (p PrototypeAST) String() string {
 	s := p.FuncName + "("
-	for i, arg := range p.Params {
+	for i, param := range p.Params {
 		if i < len(p.Params)-1 {
-			s = fmt.Sprintf("%s%s,", s, arg)
+			s = fmt.Sprintf("%s%s,", s, param)
 		} else {
-			s = fmt.Sprintf("%s%s)", s, arg)
+			s = fmt.Sprintf("%s%s)", s, param)
 		}
 	}
 	return s
@@ -161,7 +172,10 @@ func (f FunctionAST) CodeGen(*ir.Block) (interface{}, error) {
 	}
 
 	if currentBlock.Term == nil {
-		currentBlock.NewRet(constant.NewFloat(types.Double, 0.0))
+		if f.Prototype.ReturnType != Void {
+			return nil, errors.New("non-void function: " + f.Prototype.FuncName + " needs return")
+		}
+		currentBlock.NewRet(nil)
 	}
 
 	return theFunc, nil
@@ -280,7 +294,10 @@ func (c CallExprAST) CodeGen(block *ir.Block) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, gen.(value.Value))
+
+		arg := gen.(value.Value)
+
+		args = append(args, arg)
 
 	}
 	return block.NewCall(theFunc, args...), nil
@@ -321,6 +338,45 @@ func (b BinaryExprAST) CodeGen(block *ir.Block) (interface{}, error) {
 	}
 	rightValue := gen.(value.Value)
 
+	if getType(leftValue) != getType(rightValue) {
+		return nil, errors.New("types in binary expression must match")
+	}
+
+	var val value.Value
+
+	switch getType(leftValue) {
+	case Double:
+		val, err = b.handleDoubleOps(block, leftValue, rightValue)
+		break
+	case String:
+		val, err = b.handleStringOps(block, leftValue, rightValue)
+		break
+	default:
+		val = nil
+		err = errors.New("unexpected type in binary expression")
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return val, nil
+
+}
+
+func (b BinaryExprAST) handleStringOps(block *ir.Block, leftValue value.Value, rightValue value.Value) (value.Value, error) {
+	var val value.Value
+	var err error
+
+	switch b.Operator.Op {
+	default:
+		val = nil
+		err = errors.New("unsupported operator for double: " + string(b.Operator.Op))
+	}
+	return val, err
+}
+
+func (b BinaryExprAST) handleDoubleOps(block *ir.Block, leftValue value.Value, rightValue value.Value) (value.Value, error) {
 	switch b.Operator.Op {
 
 	case '*':
@@ -338,9 +394,11 @@ func (b BinaryExprAST) CodeGen(block *ir.Block) (interface{}, error) {
 	case '=':
 		cmp := block.NewFCmp(enum.FPredOEQ, leftValue, rightValue)
 		return block.NewUIToFP(cmp, types.Double), nil
+	case '!':
+		cmp := block.NewFCmp(enum.FPredONE, leftValue, rightValue)
+		return block.NewUIToFP(cmp, types.Double), nil
 	}
-
-	return constant.NewFloat(types.Double, 0), nil
+	return nil, errors.New("unsupported operator for double: " + string(b.Operator.Op))
 }
 
 func (b BinaryExprAST) String() string {
@@ -358,6 +416,23 @@ func (n NumberExprAST) CodeGen(*ir.Block) (interface{}, error) {
 
 func (n NumberExprAST) String() string {
 	return fmt.Sprintf("%f", n.Val)
+}
+
+type StringExprAST struct {
+	Expr
+	Val string
+}
+
+func (s StringExprAST) CodeGen(block *ir.Block) (interface{}, error) {
+	charArray := constant.NewCharArrayFromString(s.Val + string(rune(0)))
+	x := block.NewAlloca(charArray.Type())
+	block.NewStore(charArray, x)
+	val := block.NewBitCast(x, types.I8Ptr)
+	return val, nil
+}
+
+func (s StringExprAST) String() string {
+	return fmt.Sprintf("\"%s\"", s.Val)
 }
 
 type VariableExprAST struct {

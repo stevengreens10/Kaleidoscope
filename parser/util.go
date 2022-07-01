@@ -18,6 +18,7 @@ var namedValues = map[*ir.Func]map[string]value.Value{
 
 var opPrecedence = map[rune]int{
 	'=': 0,
+	'!': 0,
 	'<': 10,
 	'>': 10,
 	'+': 20,
@@ -42,7 +43,7 @@ func retrieveVar(block *ir.Block, name string) (value.Value, error) {
 
 	// STEP 1: Check local block
 	if namedVar, ok := namedValues[block.Parent][name]; ok {
-		return block.NewLoad(types.Double, namedVar), nil
+		return load(block, namedVar), nil
 	}
 
 	// STEP 2: Check const
@@ -51,6 +52,11 @@ func retrieveVar(block *ir.Block, name string) (value.Value, error) {
 	}
 
 	return nil, errors.New("could not identify var: " + name)
+}
+
+func load(block *ir.Block, namedVar value.Value) value.Value {
+
+	return block.NewLoad(getIRType(getType(namedVar)), namedVar)
 }
 
 func setVar(block *ir.Block, name string, val value.Value) error {
@@ -69,10 +75,10 @@ func setVar(block *ir.Block, name string, val value.Value) error {
 	// STEP 1: Check if local var exists
 	if block != nil {
 		if namedVar, ok := namedValues[block.Parent][name]; ok {
-			if _, ok := namedVar.Type().(*types.PointerType); !ok {
-				return errors.New("cannot write to variable " + name)
+			err := store(block, name, val, namedVar)
+			if err != nil {
+				return err
 			}
-			block.NewStore(val, namedVar)
 			return nil
 		}
 	}
@@ -83,9 +89,19 @@ func setVar(block *ir.Block, name string, val value.Value) error {
 	}
 
 	// STEP 3: Create new local var
-	newVar := block.NewAlloca(types.Double)
-	block.NewStore(val, newVar)
+	newVar := block.NewAlloca(val.Type())
 	namedValues[block.Parent][name] = newVar
+	return store(block, name, val, newVar)
+}
+
+func store(block *ir.Block, name string, val value.Value, namedVar value.Value) error {
+	if _, ok := namedVar.Type().(*types.PointerType); !ok {
+		return errors.New("cannot write to variable " + name)
+	}
+	if !val.Type().Equal(namedVar.Type().(*types.PointerType).ElemType) {
+		return errors.New("cannot store incompatible type for: " + name)
+	}
+	block.NewStore(val, namedVar)
 	return nil
 }
 
@@ -117,4 +133,37 @@ func genStatements(block *ir.Block, stmts []*StatementAST) (*ir.Block, error) {
 		}
 	}
 	return block, nil
+}
+
+func getIRType(typ Type) types.Type {
+	switch typ {
+	case Double:
+		return types.Double
+	case String:
+		return types.NewPointer(types.I8)
+	case Void:
+		return types.Void
+	}
+	return nil
+}
+
+func getType(val value.Value) Type {
+	t := val.Type()
+	if arrType, ok := t.(*types.ArrayType); ok {
+		if arrType.ElemType == types.I8 {
+			return String
+		}
+	} else if _, ok := t.(*types.FloatType); ok {
+		return Double
+	} else if ptrType, ok := t.(*types.PointerType); ok {
+		if _, ok := ptrType.ElemType.(*types.FloatType); ok {
+			return Double
+		}
+		if ptr2, ok := ptrType.ElemType.(*types.PointerType); ok {
+			if ptr2.ElemType == types.I8 {
+				return String
+			}
+		}
+	}
+	return Invalid
 }
