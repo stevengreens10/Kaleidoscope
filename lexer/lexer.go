@@ -27,6 +27,7 @@ const (
 	TokConst  int = -7
 	TokIf     int = -8
 	TokElse   int = -9
+	TokWhile  int = -10
 
 	TokEOF int = -99
 )
@@ -82,6 +83,8 @@ func (l *Lexer) parseToken() int {
 			return TokIf
 		} else if str == "else" {
 			return TokElse
+		} else if str == "while" {
+			return TokWhile
 		}
 
 		l.Identifier = str

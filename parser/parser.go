@@ -102,6 +102,9 @@ func (p *Parser) parseStatement() (*StatementAST, error) {
 	case lexer.TokIf:
 		ast, err = p.parseIf()
 		break
+	case lexer.TokWhile:
+		ast, err = p.parseWhile()
+		break
 	default:
 		ast, err = p.parseExpression()
 	}
@@ -150,6 +153,26 @@ func (p *Parser) parseIf() (AST, error) {
 		Cond:     cond,
 		IfBody:   ifBody,
 		ElseBody: elseBody,
+	}, nil
+}
+
+func (p *Parser) parseWhile() (AST, error) {
+	// Eat "while"
+	p.lexer.NextToken()
+
+	cond, err := p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	whileBody, err := p.parseStatementBlock()
+	if err != nil {
+		return nil, err
+	}
+
+	return &WhileAST{
+		Cond: cond,
+		Body: whileBody,
 	}, nil
 }
 

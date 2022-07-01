@@ -155,16 +155,9 @@ func (f FunctionAST) CodeGen(*ir.Block) (interface{}, error) {
 		}
 	}
 
-	currentBlock := entry
-
-	for _, stmt := range f.Body {
-		gen, err := stmt.CodeGen(currentBlock)
-		if err != nil {
-			return nil, err
-		}
-		if block, ok := gen.(*ir.Block); ok {
-			currentBlock = block
-		}
+	currentBlock, err := genStatements(entry, f.Body)
+	if err != nil {
+		return nil, err
 	}
 
 	if currentBlock.Term == nil {
@@ -205,17 +198,9 @@ func (i IfAST) CodeGen(block *ir.Block) (interface{}, error) {
 
 	condVal = block.NewFCmp(enum.FPredOGT, condVal, constant.NewFloat(types.Double, 0.0))
 
-	ifCurrentBlock := ifBlock
-
-	for _, stmt := range i.IfBody {
-		gen, err = stmt.CodeGen(ifCurrentBlock)
-		if err != nil {
-			return nil, err
-		}
-
-		if retBlock, ok := gen.(*ir.Block); ok {
-			ifCurrentBlock = retBlock
-		}
+	ifCurrentBlock, err := genStatements(ifBlock, i.IfBody)
+	if err != nil {
+		return nil, err
 	}
 
 	if ifCurrentBlock.Term == nil {
@@ -224,16 +209,9 @@ func (i IfAST) CodeGen(block *ir.Block) (interface{}, error) {
 
 	if i.ElseBody != nil {
 		elseBlock := newBlock(block, "if-false-block")
-		elseCurrentBlock := elseBlock
-		for _, stmt := range i.ElseBody {
-			gen, err = stmt.CodeGen(elseCurrentBlock)
-			if err != nil {
-				return nil, err
-			}
-
-			if retBlock, ok := gen.(*ir.Block); ok {
-				elseCurrentBlock = retBlock
-			}
+		elseCurrentBlock, err := genStatements(elseBlock, i.ElseBody)
+		if err != nil {
+			return nil, err
 		}
 
 		if elseCurrentBlock.Term == nil {
@@ -243,6 +221,43 @@ func (i IfAST) CodeGen(block *ir.Block) (interface{}, error) {
 	} else {
 		// No else
 		block.NewCondBr(condVal, ifBlock, afterBlock)
+	}
+
+	return afterBlock, nil
+}
+
+type WhileAST struct {
+	ASTNode
+	Cond ExprAST
+	Body []*StatementAST
+}
+
+func (w WhileAST) String() string {
+	return "while " + w.Cond.String() + " {...};"
+}
+
+func (w WhileAST) CodeGen(block *ir.Block) (interface{}, error) {
+	testBlock := newBlock(block, "while-test")
+	loopBlock := newBlock(block, "while-loop")
+	afterBlock := newBlock(block, "while-after")
+
+	gen, err := w.Cond.CodeGen(testBlock)
+	if err != nil {
+		return nil, err
+	}
+	condVal := gen.(value.Value)
+	condVal = testBlock.NewFCmp(enum.FPredOGT, condVal, constant.NewFloat(types.Double, 0.0))
+	testBlock.NewCondBr(condVal, loopBlock, afterBlock)
+
+	block.NewBr(testBlock)
+
+	loopCurrentBlock, err := genStatements(loopBlock, w.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if loopCurrentBlock.Term == nil {
+		loopCurrentBlock.NewBr(testBlock)
 	}
 
 	return afterBlock, nil

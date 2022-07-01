@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
+	"github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 )
 
@@ -34,17 +35,17 @@ func getFunc(module *ir.Module, name string) *ir.Func {
 }
 
 func retrieveVar(block *ir.Block, name string) (value.Value, error) {
-	// STEP 0: Top level var = retrieve global
+	// STEP 0: Top level var = retrieve const
 	if block == nil {
 		return namedValues[nil][name], nil
 	}
 
 	// STEP 1: Check local block
-	if val, ok := namedValues[block.Parent][name]; ok {
-		return val, nil
+	if namedVar, ok := namedValues[block.Parent][name]; ok {
+		return block.NewLoad(types.Double, namedVar), nil
 	}
 
-	// STEP 2: Check global
+	// STEP 2: Check const
 	if val, ok := namedValues[nil][name]; ok {
 		return val, nil
 	}
@@ -67,20 +68,24 @@ func setVar(block *ir.Block, name string, val value.Value) error {
 
 	// STEP 1: Check if local var exists
 	if block != nil {
-		if _, ok := namedValues[block.Parent][name]; ok {
-			namedValues[block.Parent][name] = val
+		if namedVar, ok := namedValues[block.Parent][name]; ok {
+			if _, ok := namedVar.Type().(*types.PointerType); !ok {
+				return errors.New("cannot write to variable " + name)
+			}
+			block.NewStore(val, namedVar)
 			return nil
 		}
 	}
 
 	// STEP 2: Check if global exists
 	if _, ok := namedValues[nil][name]; ok {
-		namedValues[nil][name] = val
 		return errors.New("cannot write to constant variable: " + name)
 	}
 
 	// STEP 3: Create new local var
-	namedValues[block.Parent][name] = val
+	newVar := block.NewAlloca(types.Double)
+	block.NewStore(val, newVar)
+	namedValues[block.Parent][name] = newVar
 	return nil
 }
 
@@ -98,4 +103,18 @@ func newBlock(block *ir.Block, name string) *ir.Block {
 	hash := getMD5Hash(block.LocalName + name)[0:8]
 	newName := name + "_" + hash
 	return block.Parent.NewBlock(newName)
+}
+
+func genStatements(block *ir.Block, stmts []*StatementAST) (*ir.Block, error) {
+	for _, stmt := range stmts {
+		gen, err := stmt.CodeGen(block)
+		if err != nil {
+			return nil, err
+		}
+
+		if retBlock, ok := gen.(*ir.Block); ok {
+			block = retBlock
+		}
+	}
+	return block, nil
 }
