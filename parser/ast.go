@@ -218,19 +218,9 @@ func (i IfAST) CodeGen(block *ir.Block) (interface{}, error) {
 		}
 	}
 
-	var phi *ir.InstPhi
-
-	if ifCurrentBlock.Term != nil {
-		if retTerm, ok := ifCurrentBlock.Term.(*ir.TermRet); ok {
-			ifVal := retTerm.X
-
-			phi = afterBlock.NewPhi(&ir.Incoming{
-				X:    ifVal,
-				Pred: ifCurrentBlock,
-			})
-		}
+	if ifCurrentBlock.Term == nil {
+		ifCurrentBlock.NewBr(afterBlock)
 	}
-	ifCurrentBlock.NewBr(afterBlock)
 
 	if i.ElseBody != nil {
 		elseBlock := newBlock(block, "if-false-block")
@@ -245,47 +235,14 @@ func (i IfAST) CodeGen(block *ir.Block) (interface{}, error) {
 				elseCurrentBlock = retBlock
 			}
 		}
-		if elseCurrentBlock.Term != nil {
-			if retTerm, ok := elseCurrentBlock.Term.(*ir.TermRet); ok {
-				elseVal := retTerm.X
-				elseInc := &ir.Incoming{
-					X:    elseVal,
-					Pred: elseCurrentBlock,
-				}
-				if phi == nil {
-					// If "if" block returns nothing, set its phi val to this one
-					ifInc := &ir.Incoming{
-						X:    elseVal,
-						Pred: ifCurrentBlock,
-					}
-					afterBlock.NewPhi(elseInc, ifInc)
-				} else {
-					phi.Incs = append(phi.Incs, elseInc)
-				}
-			}
-		} else {
-			// "Else" returns nothing
-			if phi != nil {
-				// "if" does, add phi with if block val
-				elseInc := &ir.Incoming{
-					X:    phi.Incs[0].X,
-					Pred: elseCurrentBlock,
-				}
-				phi.Incs = append(phi.Incs, elseInc)
-			}
+
+		if elseCurrentBlock.Term == nil {
+			elseCurrentBlock.NewBr(afterBlock)
 		}
-		elseCurrentBlock.NewBr(afterBlock)
 		block.NewCondBr(condVal, ifBlock, elseBlock)
 	} else {
 		// No else
 		block.NewCondBr(condVal, ifBlock, afterBlock)
-		if phi == nil {
-
-		}
-	}
-
-	if phi != nil {
-		afterBlock.NewRet(phi)
 	}
 
 	return afterBlock, nil
